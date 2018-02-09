@@ -34,7 +34,7 @@ protected:
 
     Mutex mutex;
     Vector cogL,cogR;
-    Vector cam_home_position;
+    Vector cam_home_position, arm_home_position, arm_home_orientation;
     bool okL,okR;
 
     bool simulation;
@@ -93,14 +93,12 @@ protected:
     Vector computeHandOrientation()
     {
         // FILL IN THE CODE
-//        Vector fixation_point;
-//        igaze->getFixationPoint(fixation_point);
-        Matrix R(3,3);
-        R(0,0) = -1.0; R(0,1) = 0.0; R(0,2) = 0.0;
-        R(1,0) = 0.0; R(1,1) = 0.0; R(1,2) = -1.0;
-        R(2,0) = 0.0; R(2,1) = -1.0; R(2,2) = 0.0;
+        Matrix rotation_matrix(3,3);
+        rotation_matrix(0,0) = -1.0; rotation_matrix(0,1) =  0.0; rotation_matrix(0,2) =  0.0;
+        rotation_matrix(1,0) =  0.0; rotation_matrix(1,1) =  0.0; rotation_matrix(1,2) = -1.0;
+        rotation_matrix(2,0) =  0.0; rotation_matrix(2,1) = -1.0; rotation_matrix(2,2) =  0.0;
 
-        return dcm2axis(R);
+        return dcm2axis(rotation_matrix);
     }
 
     /***************************************************/
@@ -108,26 +106,42 @@ protected:
     {
         Vector curr_dof;
         iarm->getDOF(curr_dof);
-
+        iarm->setTrackingMode(true);
         Vector new_dof = zeros(3);
         new_dof[0]=1;
-        new_dof[1]=1;
+        new_dof[1]=2;
         new_dof[2]=1;
 
         iarm->setDOF(new_dof, curr_dof);
+        Vector final_position, final_orientation, joint_angles;
+        if (iarm->askForPose(x, o, final_position, final_orientation, joint_angles)){
+            iarm->goToPoseSync(final_position, final_orientation);
+            iarm->waitMotionDone(2);
+        }
 
-        iarm->goToPoseSync(x, o);
-//        Time::delay(1);
-//        iarm->waitMotionDone();
+        iarm->setTrackingMode(false);
     }
 
     /***************************************************/
     void roll(const Vector &x, const Vector &o)
     {
-        iarm->goToPoseSync(x, o);
-//        Time::delay(1);
-//        iarm->waitMotionDone();
+        Vector curr_dof;
+        iarm->getDOF(curr_dof);
+        iarm->setTrackingMode(true);
+        Vector new_dof = zeros(3);
+        new_dof[0]=1;
+        new_dof[1]=2;
+        new_dof[2]=1;
 
+        iarm->setDOF(new_dof, curr_dof);
+
+        iarm->setTrackingMode(true);
+        Vector final_position, final_orientation, joint_angles;
+        if (iarm->askForPose(x, o, final_position, final_orientation, joint_angles)){
+            iarm->goToPoseSync(final_position, final_orientation);
+            iarm->waitMotionDone(2);
+        }
+        iarm->setTrackingMode(false);
     }
 
     /***************************************************/
@@ -146,7 +160,7 @@ protected:
         position_approximation[2] = -0.20;
 
         igaze->lookAtFixationPoint(position_approximation);
-        igaze->waitMotionDone();
+        igaze->waitMotionDone(2);
         // FILL IN THE CODE
     }
 
@@ -174,7 +188,7 @@ protected:
         approachTargetWithHand(x,o);
         yInfo()<<"approached";
 
-        x[2] -=0.5;
+        x[1] -=0.2;
 
         roll(x,o);
         yInfo()<<"roll!";
@@ -186,7 +200,24 @@ protected:
     void home()
     {
         // FILL IN THE CODE
+        Vector curr_dof;
+        iarm->getDOF(curr_dof);
+        iarm->setTrackingMode(true);
+        Vector new_dof = zeros(3);
+        new_dof[0]=1;
+        new_dof[1]=2;
+        new_dof[2]=1;
+
+        iarm->setDOF(new_dof, curr_dof);
+
+        Vector final_position, final_orientation, joint_angles;
+        if (iarm->askForPose(arm_home_position, arm_home_orientation, final_position, final_orientation, joint_angles)){
+            iarm->goToPoseSync(final_position, final_orientation);
+            iarm->waitMotionDone(2);
+        }
+
         igaze->lookAtFixationPoint(cam_home_position);
+        igaze->waitMotionDone(2);
 
     }
 
@@ -247,7 +278,10 @@ public:
         // set trajectory time
         igaze->setNeckTrajTime(0.6);
         igaze->setEyesTrajTime(0.4);
+
         igaze->getFixationPoint(cam_home_position);
+        iarm->getPose(arm_home_position, arm_home_orientation);
+
         imgLPortIn.open("/imgL:i");
         imgRPortIn.open("/imgR:i");
 
@@ -324,6 +358,8 @@ public:
                 reply.addString("nack");
                 reply.addString("I don't see any object!");
             }
+
+            home();
         }
         else if (cmd=="home")
         {
