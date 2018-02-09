@@ -26,12 +26,15 @@ protected:
     ICartesianControl *iarm;
     IGazeControl      *igaze;
 
+    int startup_context_id;
+
     BufferedPort<ImageOf<PixelRgb> > imgLPortIn,imgRPortIn;
     BufferedPort<ImageOf<PixelRgb> > imgLPortOut,imgRPortOut;
     RpcServer rpcPort;
 
     Mutex mutex;
     Vector cogL,cogR;
+    Vector cam_home_position;
     bool okL,okR;
 
     bool simulation;
@@ -73,32 +76,58 @@ protected:
     Vector retrieveTarget3D(const Vector &cogL, const Vector &cogR)
     {
         // FILL IN THE CODE
-        return Vector(3);
+        Vector point=zeros(3);
+        igaze->triangulate3DPoint(cogL, cogR, point);
+        return point;
     }
 
     /***************************************************/
     void fixate(const Vector &x)
     {
         // FILL IN THE CODE
+        igaze->lookAtFixationPoint(x);
+        igaze->setTrackingMode(true);
     }
 
     /***************************************************/
     Vector computeHandOrientation()
     {
         // FILL IN THE CODE
-        return Vector(4);
+//        Vector fixation_point;
+//        igaze->getFixationPoint(fixation_point);
+        Matrix R(3,3);
+        R(0,0) = -1.0; R(0,1) = 0.0; R(0,2) = 0.0;
+        R(1,0) = 0.0; R(1,1) = 0.0; R(1,2) = -1.0;
+        R(2,0) = 0.0; R(2,1) = -1.0; R(2,2) = 0.0;
+
+        return dcm2axis(R);
     }
 
     /***************************************************/
     void approachTargetWithHand(const Vector &x, const Vector &o)
     {
-        // FILL IN THE CODE
+        Vector curr_dof;
+        iarm->getDOF(curr_dof);
+
+        Vector new_dof = zeros(3);
+        new_dof[0]=1;
+        new_dof[1]=1;
+        new_dof[2]=1;
+
+        iarm->setDOF(new_dof, curr_dof);
+
+        iarm->goToPoseSync(x, o);
+//        Time::delay(1);
+//        iarm->waitMotionDone();
     }
 
     /***************************************************/
     void roll(const Vector &x, const Vector &o)
     {
-        // FILL IN THE CODE
+        iarm->goToPoseSync(x, o);
+//        Time::delay(1);
+//        iarm->waitMotionDone();
+
     }
 
     /***************************************************/
@@ -111,13 +140,20 @@ protected:
         // with the real robot
         if (!simulation)
             igaze->blockEyes(5.0);
+        Vector position_approximation = zeros(3);
+        position_approximation[0] = -0.20;
+        position_approximation[1] =   0.20;
+        position_approximation[2] = -0.20;
 
+        igaze->lookAtFixationPoint(position_approximation);
+        igaze->waitMotionDone();
         // FILL IN THE CODE
     }
 
     /***************************************************/
     bool make_it_roll(const Vector &cogL, const Vector &cogR)
     {
+        yInfo()<<"rolling";
         Vector x;
         if (simulation)
         {
@@ -138,9 +174,11 @@ protected:
         approachTargetWithHand(x,o);
         yInfo()<<"approached";
 
+        x[2] -=0.5;
+
         roll(x,o);
         yInfo()<<"roll!";
-
+        igaze->setTrackingMode(false);
         return true;
     }
 
@@ -148,6 +186,8 @@ protected:
     void home()
     {
         // FILL IN THE CODE
+        igaze->lookAtFixationPoint(cam_home_position);
+
     }
 
 public:
@@ -162,6 +202,11 @@ public:
         optArm.put("remote","/"+robot+"/cartesianController/right_arm");
         optArm.put("local","/cartesian_client/right_arm");
 
+        Property optGaze;
+        optGaze.put("device","gazecontrollerclient");
+        optGaze.put("remote","/iKinGazeCtrl");
+        optGaze.put("local","/tracker/gaze");
+
         // let's give the controller some time to warm up
         bool ok=false;
         double t0=Time::now();
@@ -171,6 +216,7 @@ public:
             // is not connected to solver yet
             if (drvArm.open(optArm))
             {
+
                 ok=true;
                 break;
             }
@@ -185,7 +231,23 @@ public:
         }
 
         // FILL IN THE CODE
+        drvArm.view(iarm);
 
+        if (!drvGaze.open(optGaze))
+        {
+            yError()<<"Unable to open the Gaze Controller";
+            return false;
+        }
+
+        // open the view
+        drvGaze.view(igaze);
+
+        igaze->storeContext(&startup_context_id);
+
+        // set trajectory time
+        igaze->setNeckTrajTime(0.6);
+        igaze->setEyesTrajTime(0.4);
+        igaze->getFixationPoint(cam_home_position);
         imgLPortIn.open("/imgL:i");
         imgRPortIn.open("/imgR:i");
 
@@ -242,12 +304,15 @@ public:
         else if (cmd=="make_it_roll")
         {
             // FILL IN THE CODE
-            bool go=false;   // you need to properly handle this flag
+
+
+            bool is_perception_ok=true;   // you need to properly handle this flag
 
             bool rolled=false;
-            if (go || !simulation)
+            if (is_perception_ok || !simulation){
                 rolled=make_it_roll(cogL,cogR);
-            // we assume the robot is not moving now
+                // we assume the robot is not moving now
+            }
 
             if (rolled)
             {
@@ -305,6 +370,7 @@ public:
 
         if (okR)
             draw::addCircle(*imgR,color,(int)cogR[0],(int)cogR[1],5);
+
 
         imgLPortOut.prepare()=*imgL;
         imgRPortOut.prepare()=*imgR;
